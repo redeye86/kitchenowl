@@ -9,6 +9,7 @@ import 'package:kitchenowl/models/household.dart';
 import 'package:kitchenowl/models/item.dart';
 import 'package:kitchenowl/models/shoppinglist.dart';
 import 'package:kitchenowl/services/api/api_service.dart';
+import 'package:kitchenowl/services/location_service.dart';
 import 'package:kitchenowl/services/storage/storage.dart';
 import 'package:kitchenowl/services/transactions/category.dart';
 import 'package:kitchenowl/services/transactions/shoppinglist.dart';
@@ -38,9 +39,12 @@ class ShoppinglistCubit extends Cubit<ShoppinglistCubitState> {
     _initialLoad();
     refresh();
     ApiService.getInstance().onShoppinglistAdd(onShoppinglistAdd);
+    ApiService.getInstance().onShoppinglistUpdate(onShoppinglistUpdate);
     ApiService.getInstance().onShoppinglistDelete(onShoppinglistDelete);
     ApiService.getInstance().onShoppinglistItemAdd(onShoppinglistItemAdd);
     ApiService.getInstance().onShoppinglistItemRemove(onShoppinglistItemRemove);
+    LocationService.requestedShoppingList
+        .addListener(_handleRequestedShoppingList);
 
     // Refresh data when connection state transitions to authenticated
     _lastConnectionState = ApiService.getInstance().connectionStatus;
@@ -71,14 +75,31 @@ class ShoppinglistCubit extends Cubit<ShoppinglistCubitState> {
     _periodicRefreshTimer?.cancel();
     ApiService.getInstance().removeListener(_onConnectionChange);
     ApiService.getInstance().offShoppinglistAdd(onShoppinglistAdd);
+    ApiService.getInstance().offShoppinglistUpdate(onShoppinglistUpdate);
     ApiService.getInstance().offShoppinglistDelete(onShoppinglistDelete);
     ApiService.getInstance().offShoppinglistItemAdd(onShoppinglistItemAdd);
     ApiService.getInstance()
         .offShoppinglistItemRemove(onShoppinglistItemRemove);
+    LocationService.requestedShoppingList
+        .removeListener(_handleRequestedShoppingList);
     super.close();
   }
 
+  void _handleRequestedShoppingList() {
+    final request = LocationService.requestedShoppingList.value;
+    if (request == null || request.householdId != household.id) return;
+    final shoppingList = state.shoppinglists[request.shoppingListId];
+    // Not loaded yet, will be handled after the next load
+    if (shoppingList == null) return;
+    LocationService.requestedShoppingList.value = null;
+    setShoppingList(shoppingList);
+  }
+
   void onShoppinglistAdd(dynamic data) {
+    refresh();
+  }
+
+  void onShoppinglistUpdate(dynamic data) {
     refresh();
   }
 
@@ -348,6 +369,9 @@ class ShoppinglistCubit extends Cubit<ShoppinglistCubitState> {
 
     shoppingLists.forEach((_, l) =>
         ShoppinglistSorting.sortShoppinglistItems(l.items, state.sorting));
+    if (!forceOffline && shoppingLists.isNotEmpty) {
+      LocationService.syncGeofences(household, shoppingLists.values);
+    }
 
     return shoppingLists;
   }
@@ -393,6 +417,7 @@ class ShoppinglistCubit extends Cubit<ShoppinglistCubitState> {
 
     if (state is LoadingShoppinglistCubitState) {
       emit(resState);
+      _handleRequestedShoppingList();
     }
   }
 
@@ -491,6 +516,7 @@ class ShoppinglistCubit extends Cubit<ShoppinglistCubitState> {
     if (query == _refreshCurrentQuery) {
       emit(resState);
       _refreshThread = null;
+      _handleRequestedShoppingList();
     }
   }
 
